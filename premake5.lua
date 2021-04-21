@@ -29,7 +29,7 @@ glad_src = {
 lib_src = {imgui_src, glad_src}
 
 libs = {}
-libs["GLFW"] = "libs/glfw/build/src/Release/"
+libs["GLFW"] = "libs/glfw/x64/release"
 
 
 -- Workspace and project setup
