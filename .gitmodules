@@ -16,3 +16,6 @@
 [submodule "libs/imgui"]
 	path = libs/imgui
 	url = https://github.com/ocornut/imgui.git
+[submodule "stdgl_examples/libs/implot"]
+	path = stdgl_examples/libs/implot
+	url = https://github.com/epezent/implot.git

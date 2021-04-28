@@ -10,6 +10,7 @@ includes["GLM"] = "libs/glm"
 includes["spdlog"] = "libs/spdlog/include"
 includes["imgui"] = "libs/imgui"
 includes["stb"] = "libs/stb"
+includes["implot"] = "stdgl_examples/libs/implot"
 
 -- ImGUI source files
 imgui_src = {
@@ -26,7 +27,18 @@ glad_src = {
 	"libs/glad/src/glad.c"
 }
 
-lib_src = {imgui_src, glad_src}
+stdgl_src = {
+	"src/stdgl.h",
+	"src/stdgl.cpp"
+}
+
+implot_src = {
+	"stdgl_examples/libs/implot/implot.cpp",
+	"stdgl_examples/libs/implot/implot_demo.cpp",
+	"stdgl_examples/libs/implot/implot_items.cpp"
+}
+
+lib_src = { imgui_src, glad_src, stdgl_src, implot_src }
 
 libs = {}
 libs["GLFW"] = "libs/glfw/x64/release"
@@ -39,50 +51,6 @@ workspace "stdgl"
 
 	startproject "stdgl_examples"
 
--- stdgl.lib
-project "stdgl"
-	kind "StaticLib"
-	language "C++"
-	cppdialect "C++17"
-	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
-	objdir ("bin/int/" .. outputdir .. "/%{prj.name}")
-
-	files {"src/**.h", "src/**.cpp", lib_src}
-	
-	defines {
-	}
-
-	includedirs {
-		"/src",
-		"%{includes.GLFW}",
-		"%{includes.Glad}",
-		"%{includes.GLM}",
-		"%{includes.spdlog}",
-		"%{includes.imgui}",
-		"%{includes.stb}"
-	}
-	
-	libdirs {
-		"%{libs.GLFW}"
-	}
-
-	links {
-		"glfw3",
-		"opengl32.lib"
-	}
-	
-	flags {}
-
-	filter "system:windows"
-		systemversion "latest"
-
-	filter "configurations:Debug"
-		defines { "DEBUG"}
-		symbols "On"
-	
-	filter "configurations:Release"
-		defines { "NDEBUG" }
-		optimize "On"
 
 -- Example project
 --  Used for testing
@@ -94,9 +62,12 @@ project "stdgl_examples"
 	objdir ("bin/int/" .. outputdir .. "/%{prj.name}")
 	location "%{prj.name}"
 
+	dependson {"stdgl"}
+
 	files {"%{prj.name}/src/**.h", "%{prj.name}/src/**.cpp", lib_src}
 	
 	defines {
+		"STDGL_LOG"
 	}
 
 	includedirs {
@@ -107,18 +78,22 @@ project "stdgl_examples"
 		"%{includes.GLM}",
 		"%{includes.spdlog}",
 		"%{includes.imgui}",
-		"%{includes.stb}"
+		"%{includes.stb}",
+		"%{includes.implot}"
 	}
 	
 	libdirs {
 		"bin/" .. outputdir .. "/stdgl",
 		"%{libs.GLFW}"
 	}
+	
+	postbuildcommands {
+		"{COPY} res/ %{cfg.targetdir}/res/"
+	}
 
 	links {
 		"glfw3",
-		"opengl32.lib",
-		"stdgl.lib"
+		"opengl32.lib"
 	}
 	
 	flags {}
