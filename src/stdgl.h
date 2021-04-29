@@ -11,6 +11,9 @@
 #include <string>
 #include <vector>
 
+#include <memory>
+#include <optional>
+
 namespace stdgl {
 	
 	//---------------------------------------------------------------
@@ -53,6 +56,10 @@ namespace stdgl {
 	bool setupGLFW();
 	bool setupGLAD();
 	bool setupDebug();
+	bool setupOpenGL();
+	bool setupSTB();
+
+	bool setupInput(GLFWwindow* window);
 
 
 	//---------------------------------------------------------------
@@ -69,16 +76,26 @@ namespace stdgl {
 	// [SECTION] Texture
 	//---------------------------------------------------------------
 
+	enum class TextureType {
+		DIFFUSE,
+		SPECULAR,
+		AO,
+		NORMAL
+	};
+
 	struct Texture {
 		GLuint textureID;
+		TextureType type;
+
 		unsigned int width;
 		unsigned int height;
 		unsigned int channels;
 		GLenum format;
+		
 		std::string sourcePath;
 	};
 
-	Texture loadTexture(const std::string& sourcePath);
+	Texture loadTexture(const std::string& sourcePath, const TextureType& type = TextureType::DIFFUSE);
 
 	//---------------------------------------------------------------
 	// [SECTION] Mesh
@@ -90,16 +107,39 @@ namespace stdgl {
 		glm::vec2 textureCoordinate;
 	};
 
+	enum class MeshType {
+		ArrayMesh, // No indices
+		ElementMesh // Indices
+	};
+
 	struct Mesh {
 		std::vector<Vertex> vertices;
+		std::vector<unsigned int> indices;
+		std::vector<Texture> textures;
+
+		MeshType type;
 
 		GLuint vao; // Loaded vao
 		GLuint vbo; // Loaded vbo
+		GLuint ebo; // Loaded ebo (ElementMesh)
 		GLenum mode; // Loaded mode
 		GLsizei vertexCount; // Loaded vertex count
+		GLsizei indiceCount; // Loaded indice count
 	};
 
-	Mesh loadMesh(const std::vector<Vertex>& vertices, GLenum mode);
+	Mesh loadMesh(GLenum mode, const std::vector<Vertex>& vertices, const std::vector<Texture>& textures = {});
+	Mesh loadMesh(GLenum mode, const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices, const std::vector<Texture>& textures = {});
+
+
+	//---------------------------------------------------------------
+	// [SECTION] Model (a collection of meshes)
+	//---------------------------------------------------------------
+
+	struct Model {
+		std::vector<Mesh> meshes;
+	};
+
+	std::optional<Model> loadModel(const std::string& path);
 
 
 	//---------------------------------------------------------------
@@ -110,7 +150,12 @@ namespace stdgl {
 		glm::mat4 transform;
 		glm::mat4 projection;
 
-		Camera() : transform(0), projection(0) {}
+		float fov;
+		float zNear, zFar;
+
+		glm::mat4 generateProjection();
+
+		Camera() : transform(1), projection(1), fov(glm::radians(80.0f)), zNear(0.01f), zFar(1000.0f) {}
 	};
 
 
@@ -138,27 +183,29 @@ namespace stdgl {
 	void shaderLoadVec4(const char* name, glm::vec4 value);
 	void shaderLoadMat4(const char* name, glm::mat4 value);
 
+	void shaderLoadCamera(const Camera& camera);
+
 
 	//---------------------------------------------------------------
 	// [SECTION] Renderer
 	//---------------------------------------------------------------
 
 	struct RenderContext {
-		Camera camera;
+		std::shared_ptr<Camera> camera;
 
-		RenderContext() : camera() {}
+		int width, height;
+
+		RenderContext() : camera(), width(0), height(0) {}
 	};
 
 	void beginRender();		// Begins a new draw command
 	void endRender();		// Ends an active draw command
 
-	void useCamera(const Camera& camera); // TODO: Rework - point to data instead of copy
+	void useCamera(std::shared_ptr<Camera> camera);
+	std::shared_ptr<Camera> getCamera();
 
 	void drawMesh(const Mesh& mesh);
-
-	// TODO: Implement.
-	void drawQuad(glm::mat4 transform);  // Adds a draw quad action to the active draw command
-	
+	void drawModel(const Model& model);
 	
 	//---------------------------------------------------------------
 	// [SECTION] Context definition

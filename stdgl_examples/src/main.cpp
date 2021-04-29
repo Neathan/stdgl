@@ -5,43 +5,63 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
-#include <imgui.h>
-#include <implot.h>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
+#include <imgui.h>
+
+#include <implot.h>
+#include <ImGuizmo.h>
 
 const int WIDTH = 1920;
 const int HEIGHT = 1080;
 
 static std::vector<stdgl::Vertex> g_triangleData = {
 	stdgl::Vertex{ glm::vec3( 0.0f, 1.0f, 0.0f), glm::vec3( 0.0f, 0.0f, 1.0f), glm::vec2(0.5f, 1.0f) },
-	stdgl::Vertex{ glm::vec3(-1.0f, 0.0f, 0.0f), glm::vec3( 0.0f, 0.0f, 1.0f), glm::vec2(0.0f, 0.0f) },
-	stdgl::Vertex{ glm::vec3( 1.0f, 0.0f, 0.0f), glm::vec3( 0.0f, 0.0f, 1.0f), glm::vec2(1.0f, 0.0f) },
+	stdgl::Vertex{ glm::vec3(-1.0f,-1.0f, 0.0f), glm::vec3( 0.0f, 0.0f, 1.0f), glm::vec2(0.0f, 0.0f) },
+	stdgl::Vertex{ glm::vec3( 1.0f,-1.0f, 0.0f), glm::vec3( 0.0f, 0.0f, 1.0f), glm::vec2(1.0f, 0.0f) },
 };
 
 struct ExampleData {
 
 	std::unique_ptr<stdgl::Mesh> triangleMesh;
-
-	float deltaData[1000] = {0};
-	int currentDeltaDataPoint = 0;
-	float maxDeltaValue = 0;
-	bool shouldFitDelta = false;
-
+	std::unique_ptr<stdgl::Model> testModel;
 
 	const GLubyte* vendor;
 	const GLubyte* renderer;
 	const GLubyte* version;
+
+	std::shared_ptr<stdgl::Camera> camera;
+
+	/*
+	float deltaData[1000] = {0};
+	int currentDeltaDataPoint = 0;
+	float maxDeltaValue = 0;
+	bool shouldFitDelta = false;
+	*/
 };
 
 static ExampleData g_exampleData;
 
 
 void init() {
-	g_exampleData.triangleMesh = std::make_unique<stdgl::Mesh>(stdgl::loadMesh(g_triangleData, GL_TRIANGLES));
+	g_exampleData.triangleMesh = std::make_unique<stdgl::Mesh>(stdgl::loadMesh(GL_TRIANGLES, g_triangleData));
 
 	g_exampleData.vendor = glGetString(GL_VENDOR);
 	g_exampleData.renderer = glGetString(GL_RENDERER);
 	g_exampleData.version = glGetString(GL_VERSION);
+
+	g_exampleData.camera = std::make_shared<stdgl::Camera>();
+	stdgl::useCamera(g_exampleData.camera);
+
+	auto model = stdgl::loadModel("res/DamagedHelmet.glb");
+	if(model) {
+		g_exampleData.testModel = std::make_unique<stdgl::Model>(model.value());
+	}
+
+	g_exampleData.camera->transform = glm::translate(glm::mat4(1), glm::vec3(0, 0, -3));
+
+
 }
 
 void renderUI(const stdgl::Timestep& ts) {
@@ -66,6 +86,14 @@ void renderUI(const stdgl::Timestep& ts) {
 	}
 	*/
 	ImGui::End();
+
+	ImGuiIO& io = ImGui::GetIO();
+	ImGuizmo::SetRect(0, 0, io.DisplaySize.x, io.DisplaySize.y);
+	ImGuizmo::Manipulate(glm::value_ptr(g_exampleData.camera->transform),
+		glm::value_ptr(g_exampleData.camera->projection),
+		ImGuizmo::OPERATION::TRANSLATE,
+		ImGuizmo::MODE::LOCAL,
+		glm::value_ptr(g_exampleData.camera->transform));
 }
 
 void render() {
@@ -76,6 +104,8 @@ void render() {
 		stdgl::shaderUseFragmentFile("res/test_f.glsl");
 
 		stdgl::shaderBindAttribute(0, "in_position");
+		stdgl::shaderBindAttribute(1, "in_normal");
+		stdgl::shaderBindAttribute(2, "in_textureCoord");
 
 		stdgl::endShader();
 	}
@@ -84,7 +114,8 @@ void render() {
 	{
 		stdgl::useShader("basicShader");
 		{
-			stdgl::drawMesh(*g_exampleData.triangleMesh);
+
+			stdgl::drawModel(*g_exampleData.testModel);
 		}
 		stdgl::stopShader();
 	}
@@ -107,7 +138,7 @@ void update(const stdgl::Timestep& ts) {
 
 int main() {
 	// Set program output level
-	spdlog::set_level(spdlog::level::debug);
+	spdlog::set_level(spdlog::level::trace);
 
 	if (!stdgl::setupGLFW()) {
 		spdlog::error("Failed to initialize GLFW");
@@ -128,9 +159,27 @@ int main() {
 
 	if (!stdgl::setupDebug()) {
 		spdlog::error("Failed to initialize debug");
+		return -1;
+	}
+
+	if (!stdgl::setupOpenGL()) {
+		spdlog::error("Failed to setup OpenGL options");
+		return -1;
+	}
+
+	if (!stdgl::setupSTB()) {
+		spdlog::error("Failed to initialize STB");
+		return -1;
 	}
 
 	stdgl::Context* context = stdgl::createContext();
+	
+	init();
+
+	if (!stdgl::setupInput(window)) {
+		spdlog::error("Failed to setup inputs");
+		return -1;
+	}
 
 	if (!stdgl::setupImGui(window)) {
 		spdlog::error("Failed to initialize ImGui");
@@ -138,7 +187,6 @@ int main() {
 	}
 	ImPlot::CreateContext();
 
-	init();
 
 	while (!glfwWindowShouldClose(window)) {
 		stdgl::Timestep ts = stdgl::newFrame();
@@ -150,6 +198,7 @@ int main() {
 		render();
 
 		stdgl::imguiNewFrame();
+		ImGuizmo::BeginFrame();
 		renderUI(ts);
 		stdgl::renderImGui();
 

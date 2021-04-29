@@ -19,3 +19,6 @@
 [submodule "stdgl_examples/libs/implot"]
 	path = stdgl_examples/libs/implot
 	url = https://github.com/epezent/implot.git
+[submodule "libs/assimp"]
+	path = libs/assimp
+	url = https://github.com/Neathan/assimp.git

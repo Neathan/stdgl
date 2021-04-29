@@ -12,8 +12,15 @@
 #include <backends/imgui_impl_opengl3.h>
 
 #include <map>
+#include <set>
 #include <cassert>
 #include <fstream>
+
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+
+#include <stb_image.h>
 
 namespace stdgl {
 
@@ -210,8 +217,8 @@ namespace stdgl {
 	void APIENTRY glDebugOutput(GLenum source, GLenum type, unsigned int id, GLenum severity, GLsizei length, const char* message, const void* userParam) {
 		// ignore non-significant error/warning codes
 		if (id == 131169 || id == 131185 || id == 131218 || id == 131204) {
-			STDGL_LOG_TRACE("---------------");
-			STDGL_LOG_TRACE_F("Trace message ({}): {}", id, message);
+			//STDGL_LOG_TRACE("---------------");
+			//STDGL_LOG_TRACE_F("Trace message ({}): {}", id, message);
 			return;
 		}
 
@@ -269,6 +276,42 @@ namespace stdgl {
 	}
 
 
+
+	bool setupOpenGL() {
+		glEnable(GL_CULL_FACE);
+		glEnable(GL_DEPTH_TEST);
+		return true;
+	}
+
+	bool setupSTB() {
+		stbi_set_flip_vertically_on_load(true);
+		return true;
+	}
+
+	bool setupInput(GLFWwindow* window) {
+		auto callback = [](GLFWwindow* window, int width, int height) {
+			STDGL_LOG_TRACE_F("Frame buffer updated: {}x{}", width, height);
+
+			glViewport(0, 0, width, height);
+			RenderContext& renderContext = g_stdglContext->renderContext;
+			renderContext.width = width;
+			renderContext.height = height;
+
+			if (renderContext.camera) {
+				renderContext.camera->projection = renderContext.camera->generateProjection();
+			}
+		};
+		glfwSetFramebufferSizeCallback(window, callback);
+
+		// Set initial size
+		int width, height;
+		glfwGetFramebufferSize(window, &width, &height);
+		callback(window, width, height);
+
+		return true;
+	}
+
+
 	//---------------------------------------------------------------
 	// [SECTION] ImGui
 	//---------------------------------------------------------------
@@ -308,9 +351,113 @@ namespace stdgl {
 	// [SECTION] Texture
 	//---------------------------------------------------------------
 
-	//Texture loadTexture(const std::string& sourcePath) {
-	//	return {}
-	//}
+	static std::vector<GLuint> g_loadedTextures;
+
+	GLuint createTexture() {
+		GLuint textureID;
+		glGenTextures(1, &textureID);
+		g_loadedTextures.push_back(textureID);
+		return textureID;
+	}
+
+	static std::map<std::string, Texture> g_texturesCache;
+
+	GLenum channelsToFormat(int channels, bool reversed = false) {
+		STDGL_ASSERT(channels <= 4);
+
+		GLenum format = reversed ? GL_BGRA : GL_RGBA;
+		if (channels == 1) {
+			format = GL_RED;
+		}
+		else if (channels == 2) {
+			throw std::runtime_error("STBI: Unsupported format (2 channels).");
+		}
+		else if (channels == 3) {
+			format = reversed ? GL_BGR : GL_RGB;
+		}
+	}
+
+	GLuint loadTextureInternal(unsigned char* data, int width, int height, int channels, GLenum format) {
+		STDGL_ASSERT(data != nullptr);
+
+		GLuint textureID = createTexture();
+		glBindTexture(GL_TEXTURE_2D, textureID);
+
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+		glGenerateMipmap(GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, 0);
+
+		return textureID;
+	}
+
+	Texture loadTexture(const std::string& sourcePath, const TextureType& type) {
+
+		auto it = g_texturesCache.find(sourcePath);
+
+		if (it != g_texturesCache.end()) {
+			STDGL_LOG_TRACE_F("Returning cached texture: {}", sourcePath);
+			return it->second;
+		}
+		STDGL_LOG_TRACE_F("Loading texture from: {}", sourcePath);
+
+		int width, height, channels;
+		unsigned char* data = stbi_load(sourcePath.c_str(), &width, &height, &channels, 0);
+
+		GLenum format = channelsToFormat(channels);
+		GLuint textureID = loadTextureInternal(data, width, height, channels, format);
+
+		stbi_image_free(data);
+
+		g_texturesCache[sourcePath] = { textureID, type, (unsigned int)width, (unsigned int)height, (unsigned int)channels, format, sourcePath };
+		return g_texturesCache[sourcePath];
+	}
+
+	Texture loadEmbeddedTexture(const aiTexture* texture, const TextureType& type, const std::string& signature) {
+		auto it = g_texturesCache.find(signature);
+
+		if (it != g_texturesCache.end()) {
+			STDGL_LOG_TRACE_F("Returning cached embedded texture: {}", signature);
+			return it->second;
+		}
+		STDGL_LOG_TRACE_F("Loading embedded texture from: {}", signature);
+
+		
+		// aiTexel is ordered BGRA
+		// Texture is always in ARGB8888 format
+		// if mHeight == 0 the data is compressed and stored in array of size mWidth
+		// else data is of length mHeight*mWidth
+		unsigned int dataSize;
+
+		// Check if data is compressed
+		if (texture->mHeight == 0) { // Texture is compressed
+			dataSize = texture->mWidth;
+			STDGL_LOG_TRACE("Texture is compressed");
+		}
+		else {
+			// Texture is not compressed
+			dataSize = texture->mWidth * texture->mHeight;
+			STDGL_LOG_TRACE("Texture is not compressed");
+		}
+		
+		const char* hint = texture->achFormatHint; // mHeight == 0 -> length 4 else length 9
+		int width, height, channels;
+		auto charsPerVertex = sizeof(aiTexel) / sizeof(unsigned char);
+		unsigned char* data = stbi_load_from_memory((unsigned char*)texture->pcData, dataSize * charsPerVertex, &width, &height, &channels, 0);
+
+		GLenum format = channelsToFormat(channels, true);
+		STDGL_LOG_TRACE_F("Channels: {}", channels);
+		GLuint textureID = loadTextureInternal(data, width, height, channels, format);
+
+		stbi_image_free(data);
+
+		g_texturesCache[signature] = { textureID, type, (unsigned int)width, (unsigned int)height, (unsigned int)channels, format, signature };
+		return g_texturesCache[signature];
+	}
 
 
 	//---------------------------------------------------------------
@@ -334,7 +481,7 @@ namespace stdgl {
 		return vbo;
 	}
 
-	Mesh loadMesh(const std::vector<Vertex>& vertices, GLenum mode) {
+	Mesh loadMesh(GLenum mode, const std::vector<Vertex>& vertices, const std::vector<Texture>& textures) {
 		GLuint vao = createVAO();
 		GLuint vbo = createVBO();
 
@@ -346,14 +493,40 @@ namespace stdgl {
 		glEnableVertexAttribArray(1);
 		glEnableVertexAttribArray(2);
 
-		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0); // Position
-		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal)); // Normal
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0); // Position
+		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal)); // Normal
 		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, textureCoordinate)); // Texture coordinate
 
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
 		glBindVertexArray(0);
 
-		return { vertices, vao, vbo, mode, (GLsizei)vertices.size() };
+		return { vertices, {}, textures, MeshType::ArrayMesh, vao, vbo, 0, mode, (GLsizei)vertices.size(), 0 };
+	}
+
+	Mesh loadMesh(GLenum mode, const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices, const std::vector<Texture>& textures) {
+		GLuint vao = createVAO();
+		GLuint vbo = createVBO();
+		GLuint ebo = createVBO();
+
+		glBindVertexArray(vao);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
+		glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_STATIC_DRAW);
+
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
+
+		glEnableVertexAttribArray(0);
+		glEnableVertexAttribArray(1);
+		glEnableVertexAttribArray(2);
+
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0); // Position
+		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal)); // Normal
+		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, textureCoordinate)); // Texture coordinate
+
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		glBindVertexArray(0);
+
+		return { vertices, indices, textures, MeshType::ElementMesh, vao, vbo, ebo, mode, (GLsizei)vertices.size(), (GLsizei)indices.size() };
 	}
 
 
@@ -361,6 +534,10 @@ namespace stdgl {
 	// [SECTION] Camera utlities
 	//---------------------------------------------------------------
 
+	glm::mat4 Camera::generateProjection() {
+		RenderContext& renderContext = g_stdglContext->renderContext;
+		return glm::perspectiveFov(fov, (float)renderContext.width, (float)renderContext.height, zNear, zFar);
+	}
 
 	//---------------------------------------------------------------
 	// [SECTION] Shader
@@ -514,7 +691,10 @@ namespace stdgl {
 
 		glUseProgram(shaderData.programID);
 
-		return true; // TODO: implement
+		// TODO: Re-think usage
+		shaderLoadCamera(*g_stdglContext->renderContext.camera);
+
+		return true;
 	}
 
 	void stopShader() {
@@ -559,6 +739,13 @@ namespace stdgl {
 	}
 
 
+	void shaderLoadCamera(const Camera& camera) {
+		StdGLID id = getID("");
+		ShaderData& shaderData = g_shaderDataMap[id];
+		glUniformMatrix4fv(glGetUniformLocation(shaderData.programID, "projection"), 1, GL_FALSE, glm::value_ptr(camera.projection));
+		glUniformMatrix4fv(glGetUniformLocation(shaderData.programID, "view"), 1, GL_FALSE, glm::value_ptr(camera.transform));
+	}
+
 
 	//---------------------------------------------------------------
 	// [SECTION] Renderer
@@ -568,7 +755,7 @@ namespace stdgl {
 	void beginRender() {
 		// Bind the renderer
 		RenderContext& renderContext = g_stdglContext->renderContext;
-		glClear(GL_COLOR_BUFFER_BIT);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	}
 
@@ -576,14 +763,139 @@ namespace stdgl {
 		// Unbind the renderer
 	}
 
-	void useCamera(const Camera& camera) {
+	void useCamera(std::shared_ptr<Camera> camera) {
 		g_stdglContext->renderContext.camera = camera;
 	}
 
+	std::shared_ptr<Camera> getCamera() {
+		return g_stdglContext->renderContext.camera;
+	}
+
 	void drawMesh(const Mesh& mesh) {
+		// Load mesh textures
+		unsigned int diffuseCounter = 0;
+		unsigned int specularCounter = 0;
+		for (unsigned int i = 0; i < mesh.textures.size(); ++i) {
+			std::string name;
+			if (mesh.textures[i].type == TextureType::DIFFUSE) {
+				name = "texture_diffuse" + (++diffuseCounter);
+			}
+			else if (mesh.textures[i].type == TextureType::SPECULAR) {
+				name = "texture_specular" + (++specularCounter);
+			}
+
+			glActiveTexture(GL_TEXTURE0 + i);
+			shaderLoadInt(name.c_str(), i);
+			glBindTexture(GL_TEXTURE_2D, mesh.textures[i].textureID);
+		}
+		glActiveTexture(GL_TEXTURE0);
+		
+		// Load vertex buffer and call draw command
 		glBindVertexArray(mesh.vao);
-		glDrawArrays(mesh.mode, 0, mesh.vertexCount);
+		
+		if (mesh.type == MeshType::ArrayMesh) {
+			glDrawArrays(mesh.mode, 0, mesh.vertexCount);
+		}
+		else if (mesh.type == MeshType::ElementMesh) {
+			glDrawElements(mesh.mode, mesh.indiceCount, GL_UNSIGNED_INT, 0);
+		}
+
 		glBindVertexArray(0);
+	}
+
+	void drawModel(const Model& model) {
+		for (const Mesh& mesh : model.meshes) {
+			drawMesh(mesh);
+		}
+	}
+
+
+	//---------------------------------------------------------------
+	// [SECTION] Model (a collection of meshes)
+	//---------------------------------------------------------------
+
+	void loadMaterialTextures(aiMaterial* mat, aiTextureType aiType, const TextureType& type, std::vector<Texture>& textures, const aiScene* scene, const std::string& modelDirectory, const std::string& sourcePath) {
+		for (unsigned int i = 0; i < mat->GetTextureCount(aiType); ++i) {
+			aiString path;
+			mat->GetTexture(aiType, i, &path);
+
+			// Check if texture is embedded
+			if (path.C_Str()[0] != '*') {
+				textures.push_back(loadTexture(modelDirectory + std::string(path.C_Str()), type));
+				continue;
+			}
+			
+			// Texture is embedded
+			int texture = std::stoi(path.C_Str() + 1);
+			const std::string signature = '*' + std::to_string(i) + sourcePath;
+			textures.push_back(loadEmbeddedTexture(scene->mTextures[texture], type, signature));
+		}
+	}
+
+	Mesh processMesh(aiMesh* mesh, const aiScene* scene, const std::string& modelDirectory, const std::string& sourcePath) {
+		
+		std::vector<Vertex> vertices;
+		std::vector<unsigned int> indices;
+		std::vector<Texture> textures;
+		
+		// Vertices
+		for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
+			Vertex vertex = {
+				glm::vec3{ mesh->mVertices[i].x, mesh->mVertices[i].y, mesh->mVertices[i].z },
+				glm::vec3{ mesh->mNormals[i].x, mesh->mNormals[i].y, mesh->mNormals[i].z },
+				mesh->mTextureCoords[0] ? glm::vec2{ mesh->mTextureCoords[0][i].x, mesh->mTextureCoords[0][i].y} : glm::vec2{0},
+			};  // Note: We currently only support 1 of the 8 possible texture coordinates available through Assimp
+
+			vertices.push_back(vertex);
+		}
+
+		// Indices
+		for (unsigned int i = 0; i < mesh->mNumFaces; ++i) {
+			aiFace face = mesh->mFaces[i];
+			indices.insert(indices.end(), face.mIndices, face.mIndices + face.mNumIndices);
+		}
+
+		// Materials
+		if (mesh->mMaterialIndex >= 0) {
+			aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
+			// TODO: Add support for more types
+			loadMaterialTextures(material, aiTextureType_DIFFUSE, TextureType::DIFFUSE, textures, scene, modelDirectory, sourcePath);
+			loadMaterialTextures(material, aiTextureType_SPECULAR, TextureType::SPECULAR, textures, scene, modelDirectory, sourcePath);
+		}
+		
+		return loadMesh(GL_TRIANGLES, vertices, indices, textures); // TODO: Extract native primitive mode and remove post-processing effect
+	}
+
+	void processNode(aiNode* node, const aiScene* scene, std::vector<Mesh>& meshes, const std::string& modelDirectory, const std::string& sourcePath) {
+		STDGL_LOG_TRACE("Processing node");
+		for (unsigned int i = 0; i < node->mNumMeshes; ++i) {
+			aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
+			STDGL_LOG_TRACE("Loading mesh");
+			meshes.push_back(processMesh(mesh, scene, modelDirectory, sourcePath));
+		}
+
+		for (unsigned int i = 0; i < node->mNumChildren; ++i) {
+			processNode(node->mChildren[i], scene, meshes, modelDirectory, sourcePath);
+		}
+	}
+
+	std::optional<Model> loadModel(const std::string& path) {
+		Assimp::Importer importer;
+		const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate);
+
+		if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
+			STDGL_LOG_ERROR_F("Assimp error: {}", importer.GetErrorString());
+			return {};
+		}
+
+		const std::string modelDirectory = path.substr(0, path.find_last_of('/')+1);
+
+		std::vector<Mesh> meshes; // Mesh vector to populate
+
+		processNode(scene->mRootNode, scene, meshes, modelDirectory, path);
+
+		STDGL_LOG_DEBUG_F("Loaded model form: {}", path);
+		return Model{ meshes };
 	}
 
 

@@ -10,7 +10,10 @@ includes["GLM"] = "libs/glm"
 includes["spdlog"] = "libs/spdlog/include"
 includes["imgui"] = "libs/imgui"
 includes["stb"] = "libs/stb"
+includes["assimp"] = "libs/assimp/include"
+
 includes["implot"] = "stdgl_examples/libs/implot"
+includes["imguizmo"] = "stdgl_examples/libs/ImGuizmo"
 
 -- ImGUI source files
 imgui_src = {
@@ -38,10 +41,15 @@ implot_src = {
 	"stdgl_examples/libs/implot/implot_items.cpp"
 }
 
-lib_src = { imgui_src, glad_src, stdgl_src, implot_src }
+imguizmo_src = {
+	"stdgl_examples/libs/ImGuizmo/ImGuizmo.cpp"
+}
+
+lib_src = { imgui_src, glad_src, stdgl_src, implot_src, imguizmo_src}
 
 libs = {}
 libs["GLFW"] = "libs/glfw/x64/release"
+libs["assimp"] = "libs/assimp/x64"
 
 
 -- Workspace and project setup
@@ -79,12 +87,14 @@ project "stdgl_examples"
 		"%{includes.spdlog}",
 		"%{includes.imgui}",
 		"%{includes.stb}",
-		"%{includes.implot}"
+		"%{includes.assimp}",
+		"%{includes.implot}",
+		"%{includes.imguizmo}"
 	}
 	
 	libdirs {
-		"bin/" .. outputdir .. "/stdgl",
-		"%{libs.GLFW}"
+		"%{libs.GLFW}",
+		"%{libs.assimp}"
 	}
 	
 	postbuildcommands {
@@ -93,7 +103,7 @@ project "stdgl_examples"
 
 	links {
 		"glfw3",
-		"opengl32.lib"
+		"opengl32.lib",
 	}
 	
 	flags {}
@@ -104,7 +114,16 @@ project "stdgl_examples"
 	filter "configurations:Debug"
 		defines { "DEBUG"}
 		symbols "On"
+		links {
+			"assimp-vc142-mtd",
+			"zlibstaticd"
+		}
 	
 	filter "configurations:Release"
 		defines { "NDEBUG" }
 		optimize "On"
+		links {
+			"assimp-vc142-mt",
+			"zlibstatic"
+		}
+
