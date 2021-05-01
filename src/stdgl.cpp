@@ -5,7 +5,9 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
+#ifdef STDGL_LOG
 #include <spdlog/spdlog.h>
+#endif
 
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
@@ -19,6 +21,7 @@
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+
 
 #include <stb_image.h>
 
