@@ -17,6 +17,15 @@
 namespace stdgl {
 	
 	//---------------------------------------------------------------
+	// [SECTION] Data stuctures
+	//---------------------------------------------------------------
+
+	struct Vec2 {
+		int x, y;
+	};
+
+
+	//---------------------------------------------------------------
 	// [SECTION] Resource utilities
 	//---------------------------------------------------------------
 
@@ -59,7 +68,7 @@ namespace stdgl {
 	bool setupOpenGL();
 	bool setupSTB();
 
-	bool setupInput(GLFWwindow* window);
+	bool setupInput(GLFWwindow* window, bool installFramebufferCallback = true);
 
 
 	//---------------------------------------------------------------
@@ -155,7 +164,7 @@ namespace stdgl {
 
 		glm::mat4 generateProjection();
 
-		Camera() : transform(1), projection(1), fov(glm::radians(80.0f)), zNear(0.01f), zFar(1000.0f) {}
+		Camera() : transform(1.0f), projection(1.0f), fov(glm::radians(80.0f)), zNear(0.01f), zFar(1000.0f) {}
 	};
 
 
@@ -187,6 +196,16 @@ namespace stdgl {
 
 
 	//---------------------------------------------------------------
+	// [SECTION] Framebuffer
+	//---------------------------------------------------------------
+
+	bool beginFramebuffer(const char* name, int width = 0, int height = 0);
+	void endFramebuffer();
+	GLuint getFramebufferTextureID();
+	Vec2 getFramebufferSize();
+
+
+	//---------------------------------------------------------------
 	// [SECTION] Renderer
 	//---------------------------------------------------------------
 
@@ -204,6 +223,8 @@ namespace stdgl {
 	void useCamera(std::shared_ptr<Camera> camera);
 	std::shared_ptr<Camera> getCamera();
 
+	void setRendererSize(int width, int height);
+
 	void drawMesh(const Mesh& mesh);
 	void drawModel(const Model& model);
 	
@@ -217,7 +238,7 @@ namespace stdgl {
 
 		StdGLID getID(const char* str, const char* str_end = nullptr);
 
-		Context() : renderContext(), idStack() {}
+		Context() : renderContext(), idStack({0}) {}
 	};
 
 

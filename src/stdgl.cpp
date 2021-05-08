@@ -179,7 +179,7 @@ namespace stdgl {
 
 
 	void popID() {
-		STDGL_ASSERT(g_stdglContext->idStack.size() > 0);
+		STDGL_ASSERT(g_stdglContext->idStack.size() > 1);
 		g_stdglContext->idStack.pop_back();
 	}
 
@@ -291,26 +291,22 @@ namespace stdgl {
 		return true;
 	}
 
-	bool setupInput(GLFWwindow* window) {
-		auto callback = [](GLFWwindow* window, int width, int height) {
-			STDGL_LOG_TRACE_F("Frame buffer updated: {}x{}", width, height);
+	void framebufferSizeCallback(GLFWwindow* window, int width, int height) {
+		STDGL_LOG_TRACE_F("Frame buffer updated: {}x{}", width, height);
 
-			glViewport(0, 0, width, height);
-			RenderContext& renderContext = g_stdglContext->renderContext;
-			renderContext.width = width;
-			renderContext.height = height;
+		glViewport(0, 0, width, height);
+		setRendererSize(width, height);
+	};
 
-			if (renderContext.camera) {
-				renderContext.camera->projection = renderContext.camera->generateProjection();
-			}
-		};
-		glfwSetFramebufferSizeCallback(window, callback);
+	bool setupInput(GLFWwindow* window, bool installFramebufferCallback) {
+		if (installFramebufferCallback) {
+			glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
 
-		// Set initial size
-		int width, height;
-		glfwGetFramebufferSize(window, &width, &height);
-		callback(window, width, height);
-
+			// Set initial size
+			int width, height;
+			glfwGetFramebufferSize(window, &width, &height);
+			framebufferSizeCallback(window, width, height);
+		}
 		return true;
 	}
 
@@ -359,6 +355,7 @@ namespace stdgl {
 	GLuint createTexture() {
 		GLuint textureID;
 		glGenTextures(1, &textureID);
+		STDGL_LOG_TRACE_F("New texture ID generated: {}", textureID);
 		g_loadedTextures.push_back(textureID);
 		return textureID;
 	}
@@ -751,9 +748,103 @@ namespace stdgl {
 
 
 	//---------------------------------------------------------------
-	// [SECTION] Renderer
+	// [SECTION] Framebuffer
 	//---------------------------------------------------------------
 
+	struct FramebufferData {
+		int width, height;
+
+		GLuint framebufferID;
+		GLuint textureID;
+		GLuint rbo;
+
+		FramebufferData() : width(0), height(0), framebufferID(0), textureID(0), rbo(0) {}
+	};
+
+	typedef std::map<StdGLID, FramebufferData> FramebufferDataMap;
+	static FramebufferDataMap g_framebufferDataMap;
+
+	void initializeFramebuffer(FramebufferData& framebufferData) {
+		glGenFramebuffers(1, &framebufferData.framebufferID);
+		glBindFramebuffer(GL_FRAMEBUFFER, framebufferData.framebufferID);
+
+		// Create texture
+		framebufferData.textureID = createTexture();
+		glBindTexture(GL_TEXTURE_2D, framebufferData.textureID);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, framebufferData.width, framebufferData.height, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, framebufferData.textureID, 0);
+
+		// Create depth attachment
+		glGenRenderbuffers(1, &framebufferData.rbo);
+		glBindRenderbuffer(GL_RENDERBUFFER, framebufferData.rbo);
+		glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, framebufferData.width, framebufferData.height);
+		glBindRenderbuffer(GL_RENDERBUFFER, 0);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, framebufferData.rbo);
+
+		// Check completeness
+		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+			STDGL_LOG_ERROR("Framebuffer is not complete!");
+		}
+	}
+
+	void destroyFramebuffer(FramebufferData& framebufferData) {
+		glDeleteFramebuffers(1, &framebufferData.framebufferID);
+		glDeleteTextures(1, &framebufferData.textureID);
+		glDeleteRenderbuffers(1, &framebufferData.rbo);
+
+		framebufferData.framebufferID = 0;
+		framebufferData.textureID = 0;
+		framebufferData.rbo = 0;
+	}
+
+	bool beginFramebuffer(const char* name, int width, int height) {
+		StdGLID id = getID(name);
+		FramebufferData& framebufferData = g_framebufferDataMap[id];
+		pushID(id);
+
+		if (width == 0 || height == 0) {
+			width = g_stdglContext->renderContext.width;
+			height = g_stdglContext->renderContext.height;
+		}
+
+		if (framebufferData.width != width || framebufferData.height != height) {
+			framebufferData.width = width;
+			framebufferData.height = height;
+			if (framebufferData.framebufferID != 0) {
+				destroyFramebuffer(framebufferData);
+			}
+			initializeFramebuffer(framebufferData);
+			return true;
+		}
+		glBindFramebuffer(GL_FRAMEBUFFER, framebufferData.framebufferID);
+		return false;
+	}
+
+	void endFramebuffer() {
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		popID();
+	}
+
+	GLuint getFramebufferTextureID() {
+		StdGLID id = getID("");
+		FramebufferData& framebufferData = g_framebufferDataMap[id];
+
+		return framebufferData.textureID;
+	}
+
+	Vec2 getFramebufferSize() {
+		StdGLID id = getID("");
+		FramebufferData& framebufferData = g_framebufferDataMap[id];
+
+		return { framebufferData.width, framebufferData.height };
+	}
+
+	//---------------------------------------------------------------
+	// [SECTION] Renderer
+	//---------------------------------------------------------------
 
 	void beginRender() {
 		// Bind the renderer
@@ -772,6 +863,20 @@ namespace stdgl {
 
 	std::shared_ptr<Camera> getCamera() {
 		return g_stdglContext->renderContext.camera;
+	}
+
+	void setRendererSize(int width, int height) {
+		RenderContext& renderContext = g_stdglContext->renderContext;
+
+		if (width < 0) width = 0;
+		if (height < 0) height = 0;
+
+		renderContext.width = width;
+		renderContext.height = height;
+
+		if (renderContext.camera && width > 0 && height > 0) {
+			renderContext.camera->projection = renderContext.camera->generateProjection();
+		}
 	}
 
 	void drawMesh(const Mesh& mesh) {
