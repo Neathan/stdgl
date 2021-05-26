@@ -7,12 +7,14 @@
 #include <GLFW/glfw3.h>
 #include <glad/glad.h>
 #include <glm/glm.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 #include <string>
 #include <vector>
 
-#include <memory>
 #include <optional>
+
+#include <memory>
 
 namespace stdgl {
 	
@@ -102,6 +104,11 @@ namespace stdgl {
 		GLenum format;
 		
 		std::string sourcePath;
+		/*
+		Texture() = default;
+		Texture(GLuint textureID, TextureType type, unsigned int width, unsigned int height,unsigned int channels, GLenum format, const std::string& sourcePath)
+			: textureID(textureID), type(type), width(width), height(height), channels(channels), format(format), sourcePath(sourcePath) {}
+			*/
 	};
 
 	Texture loadTexture(const std::string& sourcePath, const TextureType& type = TextureType::DIFFUSE);
@@ -146,6 +153,14 @@ namespace stdgl {
 
 	struct Model {
 		std::vector<Mesh> meshes;
+		std::string sourcePath;
+
+		/*
+		Model() = default;
+		Model(const std::vector<Mesh>& meshes, const std::string& sourcePath)
+			: meshes(meshes), sourcePath(sourcePath) {}
+		Model(stdgl::Model&) = default;
+		*/
 	};
 
 	std::optional<Model> loadModel(const std::string& path);
@@ -156,15 +171,19 @@ namespace stdgl {
 	//---------------------------------------------------------------
 
 	struct Camera {
-		glm::mat4 transform;
+		glm::vec3 position;
+		glm::vec3 rotation;
 		glm::mat4 projection;
 
 		float fov;
 		float zNear, zFar;
 
-		glm::mat4 generateProjection();
+		glm::mat4 getMatrix() const;
 
-		Camera() : transform(1.0f), projection(1.0f), fov(glm::radians(80.0f)), zNear(0.01f), zFar(1000.0f) {}
+		glm::mat4 generateProjection() const;
+
+		Camera(const glm::vec3& position = glm::vec3(0.0f), const glm::vec3& rotation = glm::vec3(0.0f))
+			: position(position), rotation(rotation), projection(1.0f), fov(glm::radians(80.0f)), zNear(0.01f), zFar(1000.0f) {}
 	};
 
 
@@ -198,10 +217,22 @@ namespace stdgl {
 	//---------------------------------------------------------------
 	// [SECTION] Framebuffer
 	//---------------------------------------------------------------
+	
+	enum class FramebufferAttachmentType {
+		COLOR,
+		DEPTH,
+		COLOR_RED_INT
+	};
 
-	bool beginFramebuffer(const char* name, int width = 0, int height = 0);
+	bool beginFramebuffer(const char* name, int width = 0, int height = 0, bool extraAttachment = false);
+	void buildFramebuffer();
 	void endFramebuffer();
-	GLuint getFramebufferTextureID();
+	GLuint addAttachment(FramebufferAttachmentType type, unsigned int attachmentIndex = 0);
+	bool useFramebuffer(const char* name);
+	void stopFramebuffer();
+
+	GLuint getFramebufferID();
+	GLuint getFramebufferTextureID(int attachmentIndex = 0, FramebufferAttachmentType type = FramebufferAttachmentType::COLOR);
 	Vec2 getFramebufferSize();
 
 
@@ -217,16 +248,20 @@ namespace stdgl {
 		RenderContext() : camera(), width(0), height(0) {}
 	};
 
-	void beginRender();		// Begins a new draw command
-	void endRender();		// Ends an active draw command
+	void beginRender(std::shared_ptr<Camera> camera);
+	void endRender();
+
+	void clearFramebuffer();
 
 	void useCamera(std::shared_ptr<Camera> camera);
 	std::shared_ptr<Camera> getCamera();
 
 	void setRendererSize(int width, int height);
 
-	void drawMesh(const Mesh& mesh);
-	void drawModel(const Model& model);
+	void drawMesh(const Mesh& mesh, bool skipTextures = false);
+	void drawModel(const Model& model, bool skipTextures = false);
+
+	void bindTexture(const Texture& texture, int unit = 0, std::string name = "texture_diffuse");
 	
 	//---------------------------------------------------------------
 	// [SECTION] Context definition

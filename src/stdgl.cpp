@@ -219,9 +219,9 @@ namespace stdgl {
 	// OpenGL debug output function
 	void APIENTRY glDebugOutput(GLenum source, GLenum type, unsigned int id, GLenum severity, GLsizei length, const char* message, const void* userParam) {
 		// ignore non-significant error/warning codes
-		if (id == 131169 || id == 131185 || id == 131218 || id == 131204) {
-			//STDGL_LOG_TRACE("---------------");
-			//STDGL_LOG_TRACE_F("Trace message ({}): {}", id, message);
+		if (id == 131169 || id == 131185 || id == 131218 || id == 131204 || id == 131140) { // 131140 - Blend
+			// STDGL_LOG_TRACE("---------------");
+			// STDGL_LOG_TRACE_F("Trace message ({}): {}", id, message);
 			return;
 		}
 
@@ -255,6 +255,7 @@ namespace stdgl {
 			case GL_DEBUG_SEVERITY_LOW:          STDGL_LOG_DEBUG("Severity: low"); break;
 			case GL_DEBUG_SEVERITY_NOTIFICATION: STDGL_LOG_DEBUG("Severity: notification"); break;
 		}
+
 	}
 
 	bool setupGLFW() {
@@ -283,6 +284,8 @@ namespace stdgl {
 	bool setupOpenGL() {
 		glEnable(GL_CULL_FACE);
 		glEnable(GL_DEPTH_TEST);
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		return true;
 	}
 
@@ -375,6 +378,7 @@ namespace stdgl {
 		else if (channels == 3) {
 			format = reversed ? GL_BGR : GL_RGB;
 		}
+		return format;
 	}
 
 	GLuint loadTextureInternal(unsigned char* data, int width, int height, int channels, GLenum format) {
@@ -389,7 +393,7 @@ namespace stdgl {
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, format, GL_UNSIGNED_BYTE, data);
-		glGenerateMipmap(GL_TEXTURE_2D);
+		//glGenerateMipmap(GL_TEXTURE_2D);
 		glBindTexture(GL_TEXTURE_2D, 0);
 
 		return textureID;
@@ -401,7 +405,7 @@ namespace stdgl {
 
 		if (it != g_texturesCache.end()) {
 			STDGL_LOG_TRACE_F("Returning cached texture: {}", sourcePath);
-			return it->second;
+			return Texture(it->second);
 		}
 		STDGL_LOG_TRACE_F("Loading texture from: {}", sourcePath);
 
@@ -413,8 +417,8 @@ namespace stdgl {
 
 		stbi_image_free(data);
 
-		g_texturesCache[sourcePath] = { textureID, type, (unsigned int)width, (unsigned int)height, (unsigned int)channels, format, sourcePath };
-		return g_texturesCache[sourcePath];
+		g_texturesCache[sourcePath] = Texture{ textureID, type, (unsigned int)width, (unsigned int)height, (unsigned int)channels, format, sourcePath };
+		return Texture(g_texturesCache[sourcePath]);
 	}
 
 	Texture loadEmbeddedTexture(const aiTexture* texture, const TextureType& type, const std::string& signature) {
@@ -422,7 +426,7 @@ namespace stdgl {
 
 		if (it != g_texturesCache.end()) {
 			STDGL_LOG_TRACE_F("Returning cached embedded texture: {}", signature);
-			return it->second;
+			return Texture(it->second);
 		}
 		STDGL_LOG_TRACE_F("Loading embedded texture from: {}", signature);
 
@@ -455,8 +459,8 @@ namespace stdgl {
 
 		stbi_image_free(data);
 
-		g_texturesCache[signature] = { textureID, type, (unsigned int)width, (unsigned int)height, (unsigned int)channels, format, signature };
-		return g_texturesCache[signature];
+		g_texturesCache[signature] = Texture{ textureID, type, (unsigned int)width, (unsigned int)height, (unsigned int)channels, format, signature };
+		return Texture(g_texturesCache[signature]);
 	}
 
 
@@ -499,8 +503,7 @@ namespace stdgl {
 
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
 		glBindVertexArray(0);
-
-		return { vertices, {}, textures, MeshType::ArrayMesh, vao, vbo, 0, mode, (GLsizei)vertices.size(), 0 };
+		return Mesh{ vertices, std::vector<unsigned int>(), textures, MeshType::ArrayMesh, vao, vbo, 0, mode, (GLsizei)vertices.size(), 0 };
 	}
 
 	Mesh loadMesh(GLenum mode, const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices, const std::vector<Texture>& textures) {
@@ -526,7 +529,7 @@ namespace stdgl {
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
 		glBindVertexArray(0);
 
-		return { vertices, indices, textures, MeshType::ElementMesh, vao, vbo, ebo, mode, (GLsizei)vertices.size(), (GLsizei)indices.size() };
+		return Mesh{ vertices, indices, textures, MeshType::ElementMesh, vao, vbo, ebo, mode, (GLsizei)vertices.size(), (GLsizei)indices.size() };
 	}
 
 
@@ -534,7 +537,11 @@ namespace stdgl {
 	// [SECTION] Camera utlities
 	//---------------------------------------------------------------
 
-	glm::mat4 Camera::generateProjection() {
+	glm::mat4 Camera::getMatrix() const {
+		return glm::inverse(glm::translate(glm::mat4(1.0f), position) * glm::toMat4(glm::quat(rotation)));
+	}
+
+	glm::mat4 Camera::generateProjection() const {
 		RenderContext& renderContext = g_stdglContext->renderContext;
 		return glm::perspectiveFov(fov, (float)renderContext.width, (float)renderContext.height, zNear, zFar);
 	}
@@ -689,11 +696,11 @@ namespace stdgl {
 
 		ShaderData& shaderData = g_shaderDataMap[id];
 
+		if (shaderData.programID == 0) {
+			return false;
+		}
+
 		glUseProgram(shaderData.programID);
-
-		// TODO: Re-think usage
-		shaderLoadCamera(*g_stdglContext->renderContext.camera);
-
 		return true;
 	}
 
@@ -743,7 +750,7 @@ namespace stdgl {
 		StdGLID id = getID("");
 		ShaderData& shaderData = g_shaderDataMap[id];
 		glUniformMatrix4fv(glGetUniformLocation(shaderData.programID, "projection"), 1, GL_FALSE, glm::value_ptr(camera.projection));
-		glUniformMatrix4fv(glGetUniformLocation(shaderData.programID, "view"), 1, GL_FALSE, glm::value_ptr(camera.transform));
+		glUniformMatrix4fv(glGetUniformLocation(shaderData.programID, "view"), 1, GL_FALSE, glm::value_ptr(camera.getMatrix()));
 	}
 
 
@@ -751,14 +758,29 @@ namespace stdgl {
 	// [SECTION] Framebuffer
 	//---------------------------------------------------------------
 
+	struct FramebufferAttachment {
+		GLuint textureID;
+		GLuint textureInternalFormat;
+		GLuint textureFormat;
+		GLuint textureDataType;
+		GLenum textureMinFilter;
+		GLenum textureMagFilter;
+
+		GLuint targetAttachment;
+
+		FramebufferAttachment(GLuint textureID, GLuint textureInternalFormat, GLuint textureFormat, GLuint textureDataType, GLenum textureMinFilter, GLuint textureMagFilter, GLuint targetAttachment)
+			: textureID(textureID), textureInternalFormat(textureInternalFormat), textureFormat(textureFormat), textureDataType(textureDataType), textureMinFilter(textureMinFilter), textureMagFilter(textureMagFilter), targetAttachment(targetAttachment) {}
+	};
+
 	struct FramebufferData {
 		int width, height;
 
 		GLuint framebufferID;
-		GLuint textureID;
-		GLuint rbo;
 
-		FramebufferData() : width(0), height(0), framebufferID(0), textureID(0), rbo(0) {}
+		bool hasUpdated = false;
+		std::unordered_map<FramebufferAttachmentType, std::unordered_map<unsigned int, FramebufferAttachment>> attachments;
+
+		FramebufferData() : width(0), height(0), framebufferID(0) {}
 	};
 
 	typedef std::map<StdGLID, FramebufferData> FramebufferDataMap;
@@ -768,59 +790,141 @@ namespace stdgl {
 		glGenFramebuffers(1, &framebufferData.framebufferID);
 		glBindFramebuffer(GL_FRAMEBUFFER, framebufferData.framebufferID);
 
+		std::vector<GLenum> buffers;
+		bool hasDepth = false;
+
+		for (auto& [type, typeAttachments] : framebufferData.attachments) {
+			for (auto& [index, attachment] : typeAttachments) {
+				// attachment.textureID = createTexture();
+				glBindTexture(GL_TEXTURE_2D, attachment.textureID);
+				glTexImage2D(GL_TEXTURE_2D, 0, attachment.textureInternalFormat, framebufferData.width, framebufferData.height, 0, attachment.textureFormat, attachment.textureDataType, nullptr);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, attachment.textureMinFilter);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, attachment.textureMagFilter);
+				glBindTexture(GL_TEXTURE_2D, 0);
+				glFramebufferTexture2D(GL_FRAMEBUFFER, attachment.targetAttachment, GL_TEXTURE_2D, attachment.textureID, 0);
+				
+				if (type == FramebufferAttachmentType::COLOR || type == FramebufferAttachmentType::COLOR_RED_INT) {
+					buffers.push_back(attachment.targetAttachment);
+				}
+				else if (type == FramebufferAttachmentType::DEPTH) {
+					hasDepth = true;
+				}
+			}
+		}
+
+		if (buffers.empty() && hasDepth) {
+			buffers.push_back(GL_NONE);
+			glDrawBuffers(buffers.size(), buffers.data());
+		}
+		else {
+			glDrawBuffers(buffers.size(), buffers.data());
+		}
+
 		// Create texture
-		framebufferData.textureID = createTexture();
-		glBindTexture(GL_TEXTURE_2D, framebufferData.textureID);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, framebufferData.width, framebufferData.height, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+		/*
+			// Create depth attachment
+			glGenRenderbuffers(1, &framebufferData.rbo);
+			glBindRenderbuffer(GL_RENDERBUFFER, framebufferData.rbo);
+			glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, framebufferData.width, framebufferData.height);
+			glBindRenderbuffer(GL_RENDERBUFFER, 0);
+			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, framebufferData.rbo);
+
+		framebufferData.depthTextureID = createTexture();
+		glBindTexture(GL_TEXTURE_2D, framebufferData.depthTextureID);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32, framebufferData.width, framebufferData.height, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, nullptr);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 		glBindTexture(GL_TEXTURE_2D, 0);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, framebufferData.textureID, 0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, framebufferData.depthTextureID, 0);
 
-		// Create depth attachment
-		glGenRenderbuffers(1, &framebufferData.rbo);
-		glBindRenderbuffer(GL_RENDERBUFFER, framebufferData.rbo);
-		glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, framebufferData.width, framebufferData.height);
-		glBindRenderbuffer(GL_RENDERBUFFER, 0);
-		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, framebufferData.rbo);
+		if (extraAttachment) {
+			// Create extra texture attchment
+			framebufferData.extraID = createTexture();
+			glBindTexture(GL_TEXTURE_2D, framebufferData.extraID);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, framebufferData.width, framebufferData.height, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, nullptr);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			glBindTexture(GL_TEXTURE_2D, 0);
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, framebufferData.extraID, 0);
+
+			GLenum buffers[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+			glDrawBuffers(2, buffers);
+		}
+		*/
 
 		// Check completeness
-		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-			STDGL_LOG_ERROR("Framebuffer is not complete!");
+		GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+		if (status != GL_FRAMEBUFFER_COMPLETE) {
+			STDGL_LOG_ERROR_F("Framebuffer is not complete! Status: {}", status);
 		}
+
+		// Reset
+		framebufferData.hasUpdated = false;
 	}
 
 	void destroyFramebuffer(FramebufferData& framebufferData) {
 		glDeleteFramebuffers(1, &framebufferData.framebufferID);
-		glDeleteTextures(1, &framebufferData.textureID);
-		glDeleteRenderbuffers(1, &framebufferData.rbo);
 
+		for (const auto& [type, typeAttachments] : framebufferData.attachments) {
+			for (const auto& [index, attachment] : typeAttachments) {
+				glDeleteTextures(1, &attachment.textureID);
+			}
+		}
+
+		framebufferData.attachments.clear();
 		framebufferData.framebufferID = 0;
-		framebufferData.textureID = 0;
-		framebufferData.rbo = 0;
 	}
 
-	bool beginFramebuffer(const char* name, int width, int height) {
+	GLuint addAttachment(FramebufferAttachmentType type, unsigned int attachmentIndex) {
+		StdGLID id = getID("");
+		FramebufferData& framebufferData = g_framebufferDataMap[id];
+
+		GLuint textureID = createTexture();
+
+		if (type == FramebufferAttachmentType::COLOR) {
+			framebufferData.attachments[type].emplace(attachmentIndex, FramebufferAttachment(textureID, GL_RGB, GL_RGB, GL_UNSIGNED_BYTE, GL_LINEAR, GL_LINEAR, GL_COLOR_ATTACHMENT0 + attachmentIndex));
+		}
+		else if (type == FramebufferAttachmentType::DEPTH) {
+			framebufferData.attachments[type].emplace(attachmentIndex, FramebufferAttachment(textureID, GL_DEPTH_COMPONENT32, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, GL_LINEAR, GL_LINEAR, GL_DEPTH_ATTACHMENT));
+		}
+		else if (type == FramebufferAttachmentType::COLOR_RED_INT) {
+			framebufferData.attachments[type].emplace(attachmentIndex, FramebufferAttachment(textureID, GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT, GL_NEAREST, GL_NEAREST, GL_COLOR_ATTACHMENT0 + attachmentIndex));
+		}
+
+		framebufferData.hasUpdated = true;
+		return textureID;
+	}
+
+	bool beginFramebuffer(const char* name, int width, int height, bool extraAttachment) {
 		StdGLID id = getID(name);
 		FramebufferData& framebufferData = g_framebufferDataMap[id];
-		pushID(id);
 
 		if (width == 0 || height == 0) {
 			width = g_stdglContext->renderContext.width;
 			height = g_stdglContext->renderContext.height;
 		}
 
-		if (framebufferData.width != width || framebufferData.height != height) {
+		if (width == 0 || height == 0) return false;
+
+		if (framebufferData.width != width || framebufferData.height != height || framebufferData.hasUpdated) {
+			framebufferData.hasUpdated = false;
 			framebufferData.width = width;
 			framebufferData.height = height;
+			// Destroy existing framebuffer
 			if (framebufferData.framebufferID != 0) {
 				destroyFramebuffer(framebufferData);
 			}
-			initializeFramebuffer(framebufferData);
+			pushID(id);
 			return true;
 		}
-		glBindFramebuffer(GL_FRAMEBUFFER, framebufferData.framebufferID);
 		return false;
+	}
+
+	void buildFramebuffer() {
+		StdGLID id = getID("");
+		FramebufferData& framebufferData = g_framebufferDataMap[id];
+		initializeFramebuffer(framebufferData);
+		framebufferData.hasUpdated = false;
 	}
 
 	void endFramebuffer() {
@@ -828,11 +932,37 @@ namespace stdgl {
 		popID();
 	}
 
-	GLuint getFramebufferTextureID() {
+	bool useFramebuffer(const char* name) {
+		StdGLID id = getID(name);
+		FramebufferData& framebufferData = g_framebufferDataMap[id];
+
+		if (framebufferData.framebufferID == 0) {
+			return false;
+		}
+
+		pushID(id);
+		glBindFramebuffer(GL_FRAMEBUFFER, framebufferData.framebufferID);
+		return true;
+	}
+
+	void stopFramebuffer() {
+		popID();
+
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	}
+
+	GLuint getFramebufferID() {
 		StdGLID id = getID("");
 		FramebufferData& framebufferData = g_framebufferDataMap[id];
 
-		return framebufferData.textureID;
+		return framebufferData.framebufferID;
+	}
+
+	GLuint getFramebufferTextureID(int attachmentIndex, FramebufferAttachmentType type) {
+		StdGLID id = getID("");
+		FramebufferData& framebufferData = g_framebufferDataMap[id];
+
+		return framebufferData.attachments[type].at(attachmentIndex).textureID;
 	}
 
 	Vec2 getFramebufferSize() {
@@ -846,19 +976,26 @@ namespace stdgl {
 	// [SECTION] Renderer
 	//---------------------------------------------------------------
 
-	void beginRender() {
+	void beginRender(std::shared_ptr<Camera> camera) {
 		// Bind the renderer
 		RenderContext& renderContext = g_stdglContext->renderContext;
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
+		if (renderContext.camera != camera) {
+			renderContext.camera = camera;
+		}
 	}
 
 	void endRender() {
 		// Unbind the renderer
 	}
 
+	void clearFramebuffer() {
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	}
+
 	void useCamera(std::shared_ptr<Camera> camera) {
-		g_stdglContext->renderContext.camera = camera;
+		if (g_stdglContext->renderContext.camera != camera) {
+			g_stdglContext->renderContext.camera = camera;
+		}
 	}
 
 	std::shared_ptr<Camera> getCamera() {
@@ -879,24 +1016,26 @@ namespace stdgl {
 		}
 	}
 
-	void drawMesh(const Mesh& mesh) {
+	void drawMesh(const Mesh& mesh, bool skipTextures) {
+		if (!skipTextures) {
 		// Load mesh textures
-		unsigned int diffuseCounter = 0;
-		unsigned int specularCounter = 0;
-		for (unsigned int i = 0; i < mesh.textures.size(); ++i) {
-			std::string name;
-			if (mesh.textures[i].type == TextureType::DIFFUSE) {
-				name = "texture_diffuse" + (++diffuseCounter);
-			}
-			else if (mesh.textures[i].type == TextureType::SPECULAR) {
-				name = "texture_specular" + (++specularCounter);
-			}
+			unsigned int diffuseCounter = 0;
+			unsigned int specularCounter = 0;
+			for (unsigned int i = 0; i < mesh.textures.size(); ++i) {
+				std::string name;
+				if (mesh.textures[i].type == TextureType::DIFFUSE) {
+					name = "texture_diffuse" + (++diffuseCounter);
+				}
+				else if (mesh.textures[i].type == TextureType::SPECULAR) {
+					name = "texture_specular" + (++specularCounter);
+				}
 
-			glActiveTexture(GL_TEXTURE0 + i);
-			shaderLoadInt(name.c_str(), i);
-			glBindTexture(GL_TEXTURE_2D, mesh.textures[i].textureID);
+				glActiveTexture(GL_TEXTURE0 + i);
+				shaderLoadInt(name.c_str(), i);
+				glBindTexture(GL_TEXTURE_2D, mesh.textures[i].textureID);
+			}
+			glActiveTexture(GL_TEXTURE0);
 		}
-		glActiveTexture(GL_TEXTURE0);
 		
 		// Load vertex buffer and call draw command
 		glBindVertexArray(mesh.vao);
@@ -911,10 +1050,18 @@ namespace stdgl {
 		glBindVertexArray(0);
 	}
 
-	void drawModel(const Model& model) {
+	void drawModel(const Model& model, bool skipTextures) {
 		for (const Mesh& mesh : model.meshes) {
-			drawMesh(mesh);
+			drawMesh(mesh, skipTextures);
 		}
+	}
+
+
+	void bindTexture(const Texture& texture, int unit, std::string name) {
+		glActiveTexture(GL_TEXTURE0 + unit);
+		shaderLoadInt(name.c_str(), unit);
+		glBindTexture(GL_TEXTURE_2D, texture.textureID);
+		glActiveTexture(GL_TEXTURE0);
 	}
 
 
@@ -1003,7 +1150,7 @@ namespace stdgl {
 		processNode(scene->mRootNode, scene, meshes, modelDirectory, path);
 
 		STDGL_LOG_DEBUG_F("Loaded model form: {}", path);
-		return Model{ meshes };
+		return Model{ meshes, path };
 	}
 
 
